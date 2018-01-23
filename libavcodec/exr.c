@@ -864,7 +864,7 @@ static int pxr24_uncompress(EXRContext *s, const uint8_t *src,
                 in     = ptr[2] + td->xsize;
 
                 for (j = 0; j < td->xsize; ++j) {
-                    uint32_t diff = (*(ptr[0]++) << 24) |
+                    uint32_t diff = ((unsigned)*(ptr[0]++) << 24) |
                                     (*(ptr[1]++) << 16) |
                                     (*(ptr[2]++) << 8);
                     pixel += diff;
@@ -1044,7 +1044,7 @@ static int decode_block(AVCodecContext *avctx, void *tdata,
     line_offset = AV_RL64(s->gb.buffer + jobnr * 8);
 
     if (s->is_tile) {
-        if (line_offset > buf_size - 20)
+        if (buf_size < 20 || line_offset > buf_size - 20)
             return AVERROR_INVALIDDATA;
 
         src  = buf + line_offset + 20;
@@ -1055,7 +1055,7 @@ static int decode_block(AVCodecContext *avctx, void *tdata,
         tileLevelY = AV_RL32(src - 8);
 
         data_size = AV_RL32(src - 4);
-        if (data_size <= 0 || data_size > buf_size)
+        if (data_size <= 0 || data_size > buf_size - line_offset - 20)
             return AVERROR_INVALIDDATA;
 
         if (tileLevelX || tileLevelY) { /* tile level, is not the full res level */
@@ -1088,7 +1088,7 @@ static int decode_block(AVCodecContext *avctx, void *tdata,
         td->channel_line_size = td->xsize * s->current_channel_offset;/* uncompress size of one line */
         uncompressed_size = td->channel_line_size * (uint64_t)td->ysize;/* uncompress size of the block */
     } else {
-        if (line_offset > buf_size - 8)
+        if (buf_size < 8 || line_offset > buf_size - 8)
             return AVERROR_INVALIDDATA;
 
         src  = buf + line_offset + 8;
@@ -1098,7 +1098,7 @@ static int decode_block(AVCodecContext *avctx, void *tdata,
             return AVERROR_INVALIDDATA;
 
         data_size = AV_RL32(src - 4);
-        if (data_size <= 0 || data_size > buf_size)
+        if (data_size <= 0 || data_size > buf_size - line_offset - 8)
             return AVERROR_INVALIDDATA;
 
         td->ysize          = FFMIN(s->scan_lines_per_block, s->ymax - line + 1); /* s->ydelta - line ?? */

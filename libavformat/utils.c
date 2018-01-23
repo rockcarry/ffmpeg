@@ -1710,13 +1710,14 @@ int av_read_frame(AVFormatContext *s, AVPacket *pkt)
 
             if (next_pkt->dts != AV_NOPTS_VALUE) {
                 int wrap_bits = s->streams[next_pkt->stream_index]->pts_wrap_bits;
+                av_assert2(wrap_bits <= 64);
                 // last dts seen for this stream. if any of packets following
                 // current one had no dts, we will set this to AV_NOPTS_VALUE.
                 int64_t last_dts = next_pkt->dts;
                 while (pktl && next_pkt->pts == AV_NOPTS_VALUE) {
                     if (pktl->pkt.stream_index == next_pkt->stream_index &&
-                        (av_compare_mod(next_pkt->dts, pktl->pkt.dts, 2LL << (wrap_bits - 1)) < 0)) {
-                        if (av_compare_mod(pktl->pkt.pts, pktl->pkt.dts, 2LL << (wrap_bits - 1))) {
+                        av_compare_mod(next_pkt->dts, pktl->pkt.dts, 2ULL << (wrap_bits - 1)) < 0) {
+                        if (av_compare_mod(pktl->pkt.pts, pktl->pkt.dts, 2ULL << (wrap_bits - 1))) {
                             // not B-frame
                             next_pkt->pts = pktl->pkt.dts;
                         }
@@ -3737,12 +3738,6 @@ FF_ENABLE_DEPRECATION_WARNINGS
         }
     }
 
-    // close codecs which were opened in try_decode_frame()
-    for (i = 0; i < ic->nb_streams; i++) {
-        st = ic->streams[i];
-        avcodec_close(st->internal->avctx);
-    }
-
     ff_rfps_calculate(ic);
 
     for (i = 0; i < ic->nb_streams; i++) {
@@ -3923,6 +3918,7 @@ find_stream_info_err:
         st = ic->streams[i];
         if (st->info)
             av_freep(&st->info->duration_error);
+        avcodec_close(ic->streams[i]->internal->avctx);
         av_freep(&ic->streams[i]->info);
     }
     if (ic->pb)
