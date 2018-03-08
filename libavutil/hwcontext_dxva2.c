@@ -52,12 +52,8 @@ typedef struct DXVA2FramesContext {
 } DXVA2FramesContext;
 
 typedef struct DXVA2DevicePriv {
-    HMODULE d3dlib;
     HMODULE dxva2lib;
-
-    HANDLE device_handle;
-
-    IDirect3D9       *d3d9;
+    HANDLE  device_handle;
     IDirect3DDevice9 *d3d9device;
 } DXVA2DevicePriv;
 
@@ -318,15 +314,6 @@ static void dxva2_device_free(AVHWDeviceContext *ctx)
     if (hwctx->devmgr)
         IDirect3DDeviceManager9_Release(hwctx->devmgr);
 
-    if (priv->d3d9device)
-        IDirect3DDevice9_Release(priv->d3d9device);
-
-    if (priv->d3d9)
-        IDirect3D9_Release(priv->d3d9);
-
-    if (priv->d3dlib)
-        FreeLibrary(priv->d3dlib);
-
     if (priv->dxva2lib)
         FreeLibrary(priv->dxva2lib);
 
@@ -344,11 +331,7 @@ static int dxva2_device_create(AVHWDeviceContext *ctx, const char *device,
     D3DPRESENT_PARAMETERS d3dpp = {0};
     D3DDISPLAYMODE        d3ddm;
     unsigned resetToken = 0;
-    UINT adapter = D3DADAPTER_DEFAULT;
     HRESULT hr;
-
-    if (device)
-        adapter = atoi(device);
 
     priv = av_mallocz(sizeof(*priv));
     if (!priv)
@@ -358,21 +341,11 @@ static int dxva2_device_create(AVHWDeviceContext *ctx, const char *device,
     ctx->free        = dxva2_device_free;
 
     priv->device_handle = INVALID_HANDLE_VALUE;
+    priv->d3d9device = (IDirect3DDevice9*)device;
 
-    priv->d3dlib = LoadLibrary("d3d9.dll");
-    if (!priv->d3dlib) {
-        av_log(ctx, AV_LOG_ERROR, "Failed to load D3D9 library\n");
-        return AVERROR_UNKNOWN;
-    }
     priv->dxva2lib = LoadLibrary("dxva2.dll");
     if (!priv->dxva2lib) {
         av_log(ctx, AV_LOG_ERROR, "Failed to load DXVA2 library\n");
-        return AVERROR_UNKNOWN;
-    }
-
-    createD3D = (pDirect3DCreate9 *)GetProcAddress(priv->d3dlib, "Direct3DCreate9");
-    if (!createD3D) {
-        av_log(ctx, AV_LOG_ERROR, "Failed to locate Direct3DCreate9\n");
         return AVERROR_UNKNOWN;
     }
     createDeviceManager = (pCreateDeviceManager9 *)GetProcAddress(priv->dxva2lib,
@@ -382,24 +355,6 @@ static int dxva2_device_create(AVHWDeviceContext *ctx, const char *device,
         return AVERROR_UNKNOWN;
     }
 
-    priv->d3d9 = createD3D(D3D_SDK_VERSION);
-    if (!priv->d3d9) {
-        av_log(ctx, AV_LOG_ERROR, "Failed to create IDirect3D object\n");
-        return AVERROR_UNKNOWN;
-    }
-
-    IDirect3D9_GetAdapterDisplayMode(priv->d3d9, adapter, &d3ddm);
-    d3dpp.Windowed         = TRUE;
-    d3dpp.BackBufferWidth  = 640;
-    d3dpp.BackBufferHeight = 480;
-    d3dpp.BackBufferCount  = 0;
-    d3dpp.BackBufferFormat = d3ddm.Format;
-    d3dpp.SwapEffect       = D3DSWAPEFFECT_DISCARD;
-    d3dpp.Flags            = D3DPRESENTFLAG_VIDEO;
-
-    hr = IDirect3D9_CreateDevice(priv->d3d9, adapter, D3DDEVTYPE_HAL, GetDesktopWindow(),
-                                 D3DCREATE_SOFTWARE_VERTEXPROCESSING | D3DCREATE_MULTITHREADED | D3DCREATE_FPU_PRESERVE,
-                                 &d3dpp, &priv->d3d9device);
     if (FAILED(hr)) {
         av_log(ctx, AV_LOG_ERROR, "Failed to create Direct3D device\n");
         return AVERROR_UNKNOWN;
