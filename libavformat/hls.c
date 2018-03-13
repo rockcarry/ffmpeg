@@ -206,6 +206,7 @@ typedef struct HLSContext {
     int strict_std_compliance;
     char *allowed_extensions;
     int max_reload;
+    char *special_key;
 } HLSContext;
 
 static int read_chomp_line(AVIOContext *s, char *buf, int maxlen)
@@ -722,6 +723,7 @@ static int parse_playlist(HLSContext *c, const char *url,
         pls->finished = 0;
         pls->type = PLS_TYPE_UNSPECIFIED;
     }
+
     while (!avio_feof(in)) {
         read_chomp_line(in, line, sizeof(line));
         if (av_strstart(line, "#EXT-X-STREAM-INF:", &ptr)) {
@@ -810,8 +812,9 @@ static int parse_playlist(HLSContext *c, const char *url,
                     ret = AVERROR(ENOMEM);
                     goto fail;
                 }
+
                 seg->duration = duration;
-                seg->key_type = key_type;
+                seg->key_type = c->special_key ? KEY_AES_128 : key_type;
                 if (has_iv) {
                     memcpy(seg->iv, iv, sizeof(iv));
                 } else {
@@ -1126,21 +1129,28 @@ static int open_input(HLSContext *c, struct playlist *pls, struct segment *seg)
     } else if (seg->key_type == KEY_AES_128) {
         AVDictionary *opts2 = NULL;
         char iv[33], key[33], url[MAX_URL_SIZE];
-        if (strcmp(seg->key, pls->key_url)) {
-            AVIOContext *pb;
-            if (open_url(pls->parent, &pb, seg->key, c->avio_opts, opts, NULL) == 0) {
-                ret = avio_read(pb, pls->key, sizeof(pls->key));
-                if (ret != sizeof(pls->key)) {
-                    av_log(NULL, AV_LOG_ERROR, "Unable to read key file %s\n",
+
+        if (c->special_key) {
+//          av_log(NULL, AV_LOG_ERROR, "key: %s\n", c->special_key);
+            strncpy(pls->key, c->special_key, sizeof(pls->key));
+        } else {
+            if (strcmp(seg->key, pls->key_url)) {
+                AVIOContext *pb;
+                if (open_url(pls->parent, &pb, seg->key, c->avio_opts, opts, NULL) == 0) {
+                    ret = avio_read(pb, pls->key, sizeof(pls->key));
+                    if (ret != sizeof(pls->key)) {
+                        av_log(NULL, AV_LOG_ERROR, "Unable to read key file %s\n",
+                               seg->key);
+                    }
+                    ff_format_io_close(pls->parent, &pb);
+                } else {
+                    av_log(NULL, AV_LOG_ERROR, "Unable to open key file %s\n",
                            seg->key);
                 }
-                ff_format_io_close(pls->parent, &pb);
-            } else {
-                av_log(NULL, AV_LOG_ERROR, "Unable to open key file %s\n",
-                       seg->key);
+                av_strlcpy(pls->key_url, seg->key, sizeof(pls->key_url));
             }
-            av_strlcpy(pls->key_url, seg->key, sizeof(pls->key_url));
         }
+
         ff_data_to_hex(iv, seg->iv, sizeof(seg->iv), 0);
         ff_data_to_hex(key, pls->key, sizeof(pls->key), 0);
         iv[32] = key[32] = '\0';
@@ -2157,6 +2167,8 @@ static const AVOption hls_options[] = {
         INT_MIN, INT_MAX, FLAGS},
     {"max_reload", "Maximum number of times a insufficient list is attempted to be reloaded",
         OFFSET(max_reload), AV_OPT_TYPE_INT, {.i64 = 1000}, 0, INT_MAX, FLAGS},
+    {"hls_special_key", "hls special key value",
+        OFFSET(special_key), AV_OPT_TYPE_STRING, { .str = NULL },  CHAR_MIN, CHAR_MAX, FLAGS},
     {NULL}
 };
 
