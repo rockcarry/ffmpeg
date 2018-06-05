@@ -109,11 +109,11 @@ dshow_read_close(AVFormatContext *s)
     av_freep(&ctx->device_unique_name[0]);
     av_freep(&ctx->device_unique_name[1]);
 
-    if(ctx->mutex)
+    if (ctx->mutex)
         CloseHandle(ctx->mutex);
-    if(ctx->event[0])
+    if (ctx->event[0])
         CloseHandle(ctx->event[0]);
-    if(ctx->event[1])
+    if (ctx->event[1])
         CloseHandle(ctx->event[1]);
 
     pktl = ctx->pktl;
@@ -124,7 +124,7 @@ dshow_read_close(AVFormatContext *s)
         pktl = next;
     }
 
-    CoUninitialize();
+//  CoUninitialize();
 
     return 0;
 }
@@ -147,7 +147,7 @@ static int shall_we_drop(AVFormatContext *s, int index, enum dshowDeviceType dev
     unsigned int buffer_fullness = (ctx->curbufsize[index]*100)/s->max_picture_buffer;
     const char *devtypename = (devtype == VideoDevice) ? "video" : "audio";
 
-    if(dropscore[++ctx->video_frame_num%ndropscores] <= buffer_fullness) {
+    if (dropscore[++ctx->video_frame_num%ndropscores] <= buffer_fullness) {
         av_log(s, AV_LOG_ERROR,
               "real-time buffer [%s] [%s input] too full or near too full (%d%% of size: %d [rtbufsize parameter])! frame dropped!\n",
               ctx->device_name[devtype], devtypename, buffer_fullness, s->max_picture_buffer);
@@ -164,18 +164,18 @@ callback(void *priv_data, int index, uint8_t *buf, int buf_size, int64_t time, e
     struct dshow_ctx *ctx = s->priv_data;
     AVPacketList **ppktl, *pktl_next;
 
-//    dump_videohdr(s, vdhdr);
+//  dump_videohdr(s, vdhdr);
 
     WaitForSingleObject(ctx->mutex, INFINITE);
 
-    if(shall_we_drop(s, index, devtype))
+    if (shall_we_drop(s, index, devtype))
         goto fail;
 
     pktl_next = av_mallocz(sizeof(AVPacketList));
-    if(!pktl_next)
+    if (!pktl_next)
         goto fail;
 
-    if(av_new_packet(&pktl_next->pkt, buf_size) < 0) {
+    if (av_new_packet(&pktl_next->pkt, buf_size) < 0) {
         av_free(pktl_next);
         goto fail;
     }
@@ -184,7 +184,7 @@ callback(void *priv_data, int index, uint8_t *buf, int buf_size, int64_t time, e
     pktl_next->pkt.pts = time;
     memcpy(pktl_next->pkt.data, buf, buf_size);
 
-    for(ppktl = &ctx->pktl ; *ppktl ; ppktl = &(*ppktl)->next);
+    for (ppktl = &ctx->pktl ; *ppktl ; ppktl = &(*ppktl)->next);
     *ppktl = pktl_next;
     ctx->curbufsize[index] += buf_size;
 
@@ -634,7 +634,7 @@ dshow_cycle_pins(AVFormatContext *avctx, enum dshowDeviceType devtype,
         }
 
         if (desired_pin_name) {
-            if(strcmp(name_buf, desired_pin_name) && strcmp(pin_buf, desired_pin_name)) {
+            if (strcmp(name_buf, desired_pin_name) && strcmp(pin_buf, desired_pin_name)) {
                 av_log(avctx, AV_LOG_DEBUG, "skipping pin \"%s\" (\"%s\") != requested \"%s\"\n",
                     name_buf, pin_buf, desired_pin_name);
                 goto next;
@@ -777,7 +777,7 @@ dshow_open_device(AVFormatContext *avctx, ICreateDevEnum *devenum,
             goto error;
         }
     }
-        if (ctx->device_filter[otherDevType]) {
+    if (ctx->device_filter[otherDevType]) {
         // avoid adding add two instances of the same device to the graph, one for video, one for audio
         // a few devices don't support this (could also do this check earlier to avoid double crossbars, etc. but they seem OK)
         if (strcmp(device_filter_unique_name, ctx->device_unique_name[otherDevType]) == 0) {
@@ -1078,7 +1078,7 @@ static int dshow_read_header(AVFormatContext *avctx)
     int ret = AVERROR(EIO);
     int r;
 
-    CoInitialize(0);
+//  CoInitialize(0);
 
     if (!ctx->list_devices && !parse_device_name(avctx)) {
         av_log(avctx, AV_LOG_ERROR, "Malformed dshow input string.\n");
