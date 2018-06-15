@@ -47,6 +47,10 @@
 #include "libavcodec/avfft.h"
 #include "libswresample/swresample.h"
 
+#ifdef _WIN32
+# include <windows.h>
+#endif
+
 #if CONFIG_AVFILTER
 # include "libavfilter/avfilter.h"
 # include "libavfilter/buffersink.h"
@@ -2694,6 +2698,10 @@ static int read_thread(void *arg)
     int scan_all_pmts_set = 0;
     int64_t pkt_ts;
 
+#ifdef _WIN32
+    CoInitialize(NULL);
+#endif
+
     if (!wait_mutex) {
         av_log(NULL, AV_LOG_FATAL, "SDL_CreateMutex(): %s\n", SDL_GetError());
         ret = AVERROR(ENOMEM);
@@ -2997,6 +3005,10 @@ static int read_thread(void *arg)
         SDL_PushEvent(&event);
     }
     SDL_DestroyMutex(wait_mutex);
+
+#ifdef _WIN32
+    CoUninitialize();
+#endif
     return 0;
 }
 
