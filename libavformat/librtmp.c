@@ -52,6 +52,7 @@ typedef struct LibRTMPContext {
     int live;
     char *temp_filename;
     int buffer_size;
+    int timeout;
 } LibRTMPContext;
 
 static void rtmp_log(int level, const char *fmt, va_list args)
@@ -124,13 +125,15 @@ static int rtmp_open(URLContext *s, const char *uri, int flags)
         while (p) {
             options++;
             p += strspn(p, " ");
-            if (!*p)
+            if (!*p) {
                 break;
+            }
             sep = strchr(p, ' ');
-            if (sep)
+            if (sep) {
                 p = sep + 1;
-            else
+            } else {
                 break;
+            }
         }
         len += options * sizeof(" conn=");
         len += strlen(ctx->conn);
@@ -142,21 +145,24 @@ static int rtmp_open(URLContext *s, const char *uri, int flags)
         len += sizeof(" live=1");
     if (ctx->subscribe)
         len += strlen(ctx->subscribe) + sizeof(" subscribe=");
-
     if (ctx->client_buffer_time)
         len += strlen(ctx->client_buffer_time) + sizeof(" buffer=");
-
     if (ctx->swfurl || ctx->swfverify) {
         len += sizeof(" swfUrl=");
 
-        if (ctx->swfverify)
+        if (ctx->swfverify) {
             len += strlen(ctx->swfverify) + sizeof(" swfVfy=1");
-        else
+        } else {
             len += strlen(ctx->swfurl);
+        }
+    }
+    if (ctx->timeout > 0) {
+        len += sizeof(" timeout=") + 8; // max timeout 99999999s
     }
 
-    if (!(ctx->temp_filename = filename = av_malloc(len)))
+    if (!(ctx->temp_filename = filename = av_malloc(len))) {
         return AVERROR(ENOMEM);
+    }
 
     av_strlcpy(filename, s->filename, len);
     if (ctx->app) {
@@ -221,6 +227,13 @@ static int rtmp_open(URLContext *s, const char *uri, int flags)
             av_strlcat(filename, ctx->swfurl, len);
         }
     }
+    if (ctx->timeout > 0) {
+        char temp[9];
+        sprintf(temp, "%d", ctx->timeout);
+        av_strlcat(filename, " timeout=", len);
+        av_strlcat(filename, temp, len);
+    }
+    av_log(NULL, level, "%s\n", filename);
 
     RTMP_Init(r);
     if (!RTMP_SetupURL(r, filename)) {
@@ -250,8 +263,9 @@ static int rtmp_open(URLContext *s, const char *uri, int flags)
     return 0;
 fail:
     av_freep(&ctx->temp_filename);
-    if (rc)
+    if (rc) {
         RTMP_Close(r);
+    }
 
     return rc;
 }
@@ -336,6 +350,7 @@ static const AVOption options[] = {
 #if CONFIG_NETWORK
     {"rtmp_buffer_size", "set buffer size in bytes", OFFSET(buffer_size), AV_OPT_TYPE_INT, {.i64 = -1}, -1, INT_MAX, DEC|ENC },
 #endif
+    {"rtmp_recv_timeout", "set receive timeout in sec", OFFSET(timeout), AV_OPT_TYPE_INT, {.i64 = -1}, -1, 99999999, DEC|ENC },
     { NULL },
 };
 
