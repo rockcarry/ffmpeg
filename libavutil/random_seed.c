@@ -45,6 +45,11 @@
 #define TEST 0
 #endif
 
+#ifdef __MINGW32CE__
+unsigned long GetTickCount(void);
+#define clock GetTickCount
+#endif
+
 static int read_random(uint32_t *dst, const char *file)
 {
 #if HAVE_UNISTD_H
