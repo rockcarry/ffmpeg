@@ -268,7 +268,8 @@ dshow_cycle_devices(AVFormatContext *avctx, ICreateDevEnum *devenum,
         friendly_name = dup_wchar_to_utf8(var.bstrVal);
 
         if (pfilter) {
-            if (strcmp(device_name, friendly_name) && strcmp(device_name, unique_name))
+            if (  strstr(device_name, "open_uvc_cam#") != device_name && strcmp(device_name, friendly_name) && strcmp(device_name, unique_name)
+               || strstr(device_name, "open_uvc_cam#") == device_name && strstr(friendly_name, device_name + strlen("open_uvc_cam#")) == NULL)
                 goto fail1;
 
             if (!skip--) {
