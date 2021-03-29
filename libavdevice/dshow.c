@@ -157,6 +157,70 @@ static int shall_we_drop(AVFormatContext *s, int index, enum dshowDeviceType dev
     return 0;
 }
 
+static int ringbuf_write(uint8_t *rbuf, int maxsize, int tail, uint8_t *src, int len)
+{
+    uint8_t *buf1 = rbuf    + tail;
+    int      len1 = maxsize - tail < len ? maxsize - tail : len;
+    uint8_t *buf2 = rbuf;
+    int      len2 = len - len1;
+    memcpy(buf1, src + 0   , len1);
+    memcpy(buf2, src + len1, len2);
+    return len2 ? len2 : tail + len1;
+}
+
+static int ringbuf_read(uint8_t *rbuf, int maxsize, int head, uint8_t *dst, int len)
+{
+    uint8_t *buf1 = rbuf    + head;
+    int      len1 = maxsize - head < len ? maxsize - head : len;
+    uint8_t *buf2 = rbuf;
+    int      len2 = len - len1;
+    if (dst) memcpy(dst + 0   , buf1, len1);
+    if (dst) memcpy(dst + len1, buf2, len2);
+    return len2 ? len2 : head + len1;
+}
+
+static int h26x_parse_nalu_header(uint8_t *ringbuf, int maxsize, int curhead, int cursize)
+{
+    int state = 0, curbyte, i;
+    for (i=0; i<cursize; i++) {
+        curbyte = ringbuf[(curhead + i) % maxsize];
+        switch (state) {
+        case 0: case 1:
+            if (curbyte == 0x00) state++;
+            else state = 0;
+            break;
+        case 2:
+            if      (curbyte == 0x00) state = 2;
+            else if (curbyte == 0x01) state = 3;
+            else state = 0;
+            break;
+        case 3:
+            if ((curbyte & 0x1F) == 0x01 || (curbyte & 0x1F) == 0x07) return i;
+            else state = 0;
+            break;
+        }
+    }
+    return -1;
+}
+
+static int h264_parse_frame_size(uint8_t *ringbuf, int maxsize, int curhead, int cursize)
+{
+    int offset, size = 0;
+    offset = h26x_parse_nalu_header(ringbuf, maxsize, curhead, cursize);
+    if (offset == -1) return 0;
+    size    += offset;
+    cursize -= size;
+    curhead += size;
+    curhead %= maxsize;
+    offset = h26x_parse_nalu_header(ringbuf, maxsize, curhead, cursize);
+    if (offset == -1) return 0;
+    size += offset;
+    return size - 4;
+}
+
+static uint8_t s_ringbuf_data[1024*1024] = {0};
+static int     s_ringbuf_head = 0, s_ringbuf_tail = 0, s_ringbuf_size = 0;
+
 static void
 callback(void *priv_data, int index, uint8_t *buf, int buf_size, int64_t time, enum dshowDeviceType devtype)
 {
@@ -165,33 +229,44 @@ callback(void *priv_data, int index, uint8_t *buf, int buf_size, int64_t time, e
     AVPacketList **ppktl, *pktl_next;
 
 //  dump_videohdr(s, vdhdr);
-
-    WaitForSingleObject(ctx->mutex, INFINITE);
-
-    if (shall_we_drop(s, index, devtype))
-        goto fail;
-
-    pktl_next = av_mallocz(sizeof(AVPacketList));
-    if (!pktl_next)
-        goto fail;
-
-    if (av_new_packet(&pktl_next->pkt, buf_size) < 0) {
-        av_free(pktl_next);
-        goto fail;
+    if (buf_size > sizeof(s_ringbuf_data) - s_ringbuf_size) {
+        av_log(s, AV_LOG_ERROR, "ring buffer full, drop callback data !\n");
+        return;
     }
+    s_ringbuf_tail  = ringbuf_write(s_ringbuf_data, sizeof(s_ringbuf_data), s_ringbuf_tail, buf, buf_size);
+    s_ringbuf_size += buf_size;
 
-    pktl_next->pkt.stream_index = index;
-    pktl_next->pkt.pts = time;
-    memcpy(pktl_next->pkt.data, buf, buf_size);
+    while (1) {
+        int framesize = h264_parse_frame_size(s_ringbuf_data, sizeof(s_ringbuf_data), s_ringbuf_head, s_ringbuf_size);
+        if (framesize <= 0) return;
 
-    for (ppktl = &ctx->pktl ; *ppktl ; ppktl = &(*ppktl)->next);
-    *ppktl = pktl_next;
-    ctx->curbufsize[index] += buf_size;
+        WaitForSingleObject(ctx->mutex, INFINITE);
 
-    SetEvent(ctx->event[1]);
-    ReleaseMutex(ctx->mutex);
+        if (shall_we_drop(s, index, devtype))
+            goto fail;
 
+        pktl_next = av_mallocz(sizeof(AVPacketList));
+        if (!pktl_next)
+            goto fail;
+
+        if (av_new_packet(&pktl_next->pkt, framesize) < 0) {
+            av_free(pktl_next);
+            goto fail;
+        }
+
+        pktl_next->pkt.stream_index = index;
+        pktl_next->pkt.pts = time;
+        s_ringbuf_head  = ringbuf_read(s_ringbuf_data, sizeof(s_ringbuf_data), s_ringbuf_head, pktl_next->pkt.data, framesize);
+        s_ringbuf_size -= framesize;
+
+        for (ppktl = &ctx->pktl ; *ppktl ; ppktl = &(*ppktl)->next);
+        *ppktl = pktl_next;
+        ctx->curbufsize[index] += framesize;
+        SetEvent(ctx->event[1]);
+        ReleaseMutex(ctx->mutex);
+    }
     return;
+
 fail:
     ReleaseMutex(ctx->mutex);
     return;
@@ -1080,6 +1155,7 @@ static int dshow_read_header(AVFormatContext *avctx)
     int r;
 
 //  CoInitialize(0);
+    s_ringbuf_head = s_ringbuf_tail = s_ringbuf_size = 0;
 
     if (!ctx->list_devices && !parse_device_name(avctx)) {
         av_log(avctx, AV_LOG_ERROR, "Malformed dshow input string.\n");
